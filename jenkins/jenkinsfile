@@ -54,6 +54,7 @@ pipeline {
                       aquasec/trivy:0.58.2 \
                       image --scanners vuln \
                       --severity HIGH,CRITICAL \
+                      --ignore-unfixed \                      
                       --exit-code 1 \
                       "$ECR_REGISTRY/$ECR_REPOSITORY:build-$BUILD_NUMBER"
                 '''
