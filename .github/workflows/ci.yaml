@@ -41,6 +41,38 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
+
+      - name: Check GitHub OIDC subject
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          node <<'NODE'
+          const url = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+          const tokenRequestUrl =
+            url + (url.includes('?') ? '&' : '?') +
+            'audience=sts.amazonaws.com';
+
+          const response = await fetch(tokenRequestUrl, {
+            headers: {
+              Authorization:
+                `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}`
+            }
+          });
+
+          if (!response.ok) {
+            throw new Error(`OIDC request failed: ${response.status}`);
+          }
+
+          const result = await response.json();
+          const payload = JSON.parse(
+            Buffer.from(result.value.split('.')[1], 'base64url').toString()
+          );
+
+          console.log('OIDC subject:', payload.sub);
+          console.log('OIDC audience:', payload.aud);
+          NODE
+
+
       - name: Configure AWS credentials
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: aws-actions/configure-aws-credentials@v4
