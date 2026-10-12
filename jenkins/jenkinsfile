@@ -1,0 +1,92 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        AWS_REGION = 'us-east-1'
+        ECR_REGISTRY = '594729247345.dkr.ecr.us-east-1.amazonaws.com'
+        ECR_REPOSITORY = 'devops-eks-app'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'git log -1 --oneline'
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                sh '''
+                    set -eu
+                    docker run --rm \
+                      -v "$WORKSPACE/app:/app" \
+                      -w /app \
+                      python:3.12-slim \
+                      sh -c "pip install --no-cache-dir -r requirements-dev.txt && pytest -q"
+                '''
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    set -eu
+                    docker build \
+                      -f app/Dockerfile \
+                      -t "$ECR_REGISTRY/$ECR_REPOSITORY:build-$BUILD_NUMBER" \
+                      app
+                '''
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                sh '''
+                    set -eu
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      aquasec/trivy:0.58.2 \
+                      image --scanners vuln \
+                      --severity HIGH,CRITICAL \
+                      --exit-code 1 \
+                      "$ECR_REGISTRY/$ECR_REPOSITORY:build-$BUILD_NUMBER"
+                '''
+            }
+        }
+
+        stage('Push to Amazon ECR') {
+            steps {
+                sh '''
+                    set -eu
+
+                    aws ecr get-login-password \
+                      --region "$AWS_REGION" |
+                    docker login \
+                      --username AWS \
+                      --password-stdin "$ECR_REGISTRY"
+
+                    docker push \
+                      "$ECR_REGISTRY/$ECR_REPOSITORY:build-$BUILD_NUMBER"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'CI pipeline completed successfully. Image published to ECR.'
+        }
+        failure {
+            echo 'Pipeline failed. Check the failed stage and its console output.'
+        }
+        always {
+            sh 'docker logout "$ECR_REGISTRY" || true'
+        }
+    }
+}
